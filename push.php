@@ -18,7 +18,7 @@ $data = [
 ];
 
 // 发送数据，注意5678端口是Text协议的端口，Text协议需要在数据末尾加上换行符
-fwrite($client, json_encode($data) . "\n");
+fwrite($client, json_encode($data, JSON_UNESCAPED_UNICODE) . "\n");
 
 // 读取推送结果
 echo fread($client, 8192);

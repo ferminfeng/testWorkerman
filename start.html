@@ -1,11 +1,10 @@
-
 <script>
     var ws = new WebSocket("ws://192.168.10.35:1234");
-    ws.onopen = function(){
-        var uid = '100249_uid1';
+    ws.onopen = function () {
+        var uid = '{"uid":"100249_fermin"}';
         ws.send(uid);
     };
-    ws.onmessage = function(e){
+    ws.onmessage = function (e) {
         alert(e.data);
     };
 

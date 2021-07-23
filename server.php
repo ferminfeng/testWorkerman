@@ -10,7 +10,8 @@ namespace Workerman;
  * Time: 16:19
  */
 
-use Workerman\Worker;
+use Exception;
+use Throwable;
 
 require_once __DIR__ . '/Autoloader.php';
 require_once __DIR__ . '/helper.php';
@@ -20,8 +21,14 @@ $worker = new Worker('websocket://0.0.0.0:1234');
 
 /**
  * 注意这里进程数必须设置为1，否则会报端口占用错误
- * (php 7可以设置进程数大于1，前提是$inner_text_worker->reusePort=true)
+ * (php 7可以设置进程数大于1，前提是$innerTextWorker->reusePort=true)
  */
+
+$result = [
+    'code' => 1,
+    'msg' => '',
+    'data' => []
+];
 
 $worker->count = 1;
 
@@ -29,30 +36,75 @@ $worker->count = 1;
 $worker->onWorkerStart = function ($worker) {
 
     // 开启一个内部端口，方便内部系统推送数据，Text协议格式 文本+换行符
-    $inner_text_worker = new Worker('text://0.0.0.0:5678');
-    $inner_text_worker->onMessage = function ($connection, $buffer) {
-        // $data数组格式，里面有uid，表示向那个uid的页面推送数据
+    $innerTextWorker = new Worker('text://0.0.0.0:5678');
+
+    $innerTextWorker->onMessage = function ($connection, $buffer) {
         $data = json_decode($buffer, true);
 
-        $fileName = 'push';
-        $key = md5(time() . rand(1000000, 9999999) . $buffer);
-        setLog('server', $fileName, ['msg' => '接收到的数据', 'key' => $key, 'data' => $data]);
+        try {
+            if (!isset($data['type']) || empty($data['type']) || !in_array($data['type'], ['one', 'batch', 'all'])) {
+                throw new Exception('请求参数错误-type');
+            }
 
-        $uid = $data['uid'];
+            if (!isset($data['content']) || empty($data['content'])) {
+                throw new Exception('请求参数错误-content');
+            }
 
-        // 通过workerman，向uid的页面推送数据
-        $ret = sendMessageByUid($uid, $buffer);
+            switch ($data['type']) {
+                case 'one': // 给单个人发消息
+                    if (!isset($data['uid']) || empty($data['uid'])) {
+                        throw new Exception('给单个人发消息时缺少uid');
+                    }
 
-        $res = $ret ? 'ok' : 'fail';
+                    $result = sendMessageByUid($data['uid'], $buffer);
 
-        setLog('server', $fileName, ['msg' => '返回结果', 'key' => $key, 'res' => $res]);
+                    if (!$result) {
+                        throw new Exception('发送失败');
+                    }
+
+                    $return = ['code' => 1, 'msg' => '发送成功', 'data' => []];
+                    break;
+                case 'batch': // 给一批人发消息
+                    if (!isset($data['uid_array']) || empty($data['uid_array']) || !is_array($data['uid_array'])) {
+                        throw new Exception('给一批人发消息时缺少uid_array');
+                    }
+
+                    $returnData = [];
+                    foreach ($data['uid_array'] as $uid) {
+                        $result = sendMessageByUid($uid, $buffer);
+                        $returnData[$uid] = [
+                            'result' => $result ? 'success' : 'fail',
+                        ];
+                    }
+
+                    if (count($returnData) == count($data['uid_array'])) {
+                        $return = ['code' => 0, 'msg' => '发送失败', 'data' => $returnData];
+                    } else {
+                        $return = ['code' => 1, 'msg' => '发送成功', 'data' => $returnData];
+                    }
+                    break;
+                default: // 给所有人发消息
+                    broadcast($buffer);
+                    $return = ['code' => 1, 'msg' => '发送成功', 'data' => []];
+                    break;
+            }
+        } catch (Throwable $e) {
+            $return = ['code' => 0, 'msg' => $e->getMessage(), 'data' => []];
+        }
+
+
+        setLog('server', 'push', [
+            'msg' => '接收到的数据',
+            'request' => $data,
+            'return' => $return
+        ]);
 
         // 返回推送结果
-        $connection->send($res);
+        $connection->send(json_encode($return, JSON_UNESCAPED_UNICODE));
     };
 
     // ## 执行监听 ##
-    $inner_text_worker->listen();
+    $innerTextWorker->listen();
 };
 
 // 新增加一个属性，用来保存uid到connection的映射
@@ -115,7 +167,7 @@ function broadcast($message)
 }
 
 // 针对uid推送数据
-function sendMessageByUid($uid, $message)
+function sendMessageByUid($uid, $message) : bool
 {
     global $worker;
 

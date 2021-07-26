@@ -24,12 +24,6 @@ $worker = new Worker('websocket://0.0.0.0:1234');
  * (php 7可以设置进程数大于1，前提是$innerTextWorker->reusePort=true)
  */
 
-$result = [
-    'code' => 1,
-    'msg' => '',
-    'data' => []
-];
-
 $worker->count = 1;
 
 // worker进程启动后创建一个text Worker以便打开一个内部通讯端口
